@@ -1,0 +1,5 @@
+{
+  "name": "gautam-homestay-utilities-layer",
+  "version": "1.0.0",
+  "description": "Shared CloudWatch structured logger for Gautam Homestay lambdas"
+}

@@ -1,0 +1,571 @@
+org: protiviti
+app: profile
+service: gautam-homestay-images
+
+plugins:
+  - serverless-offline
+
+build:
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+    external:
+      - '@aws-sdk/*'
+      - /opt/nodejs/logger
+    target: node22
+    platform: node
+
+custom:
+  stage: ${opt:stage, 'dev'}
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: us-east-1
+  stage: ${self:custom.stage}
+  memorySize: 256
+  timeout: 29
+  logRetentionInDays: 30
+
+  environment:
+    STAGE: ${self:custom.stage}
+    USERS_TABLE: !Ref UsersTable
+    PROFILE_IMAGES_BUCKET: !Ref ProfileImagesBucket
+    USER_POOL_ID: !Ref CognitoUserPool
+    USER_POOL_CLIENT_ID: !Ref CognitoUserPoolClient
+    CLOUDFRONT_DOMAIN: !GetAtt CloudFrontDistribution.DomainName
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+
+  httpApi:
+    cors:
+      allowedOrigins:
+        - '*'
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+    authorizers:
+      cognitoAuthorizer:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+        audience:
+          - !Ref CognitoUserPoolClient
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+          Resource: !Sub '${ProfileImagesBucket.Arn}/*'
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+            - dynamodb:Scan
+          Resource:
+            - !GetAtt UsersTable.Arn
+            - !Sub '${UsersTable.Arn}/index/*'
+        - Effect: Allow
+          Action:
+            - cognito-idp:AdminCreateUser
+            - cognito-idp:AdminSetUserPassword
+            - cognito-idp:AdminAddUserToGroup
+            - cognito-idp:AdminRemoveUserFromGroup
+            - cognito-idp:AdminGetUser
+            - cognito-idp:AdminDeleteUser
+            - cognito-idp:ListUsers
+            - cognito-idp:ListUsersInGroup
+            - cognito-idp:InitiateAuth
+            - cognito-idp:SignUp
+            - cognito-idp:ConfirmSignUp
+          Resource: !GetAtt CognitoUserPool.Arn
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: 'arn:aws:logs:*:*:*'
+
+layers:
+  utilities:
+    path: layers/utilities
+    name: ${self:service}-${self:custom.stage}-utilities
+    description: Shared CloudWatch structured logger and helpers
+    compatibleRuntimes:
+      - nodejs22.x
+    retain: false
+
+functions:
+  # ── Auth ────────────────────────────────────────────────
+  register:
+    handler: src/handlers/auth.register
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/register
+          method: post
+
+  login:
+    handler: src/handlers/auth.login
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/login
+          method: post
+
+  confirmAccount:
+    handler: src/handlers/auth.confirmAccount
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/confirm
+          method: post
+
+  refreshToken:
+    handler: src/handlers/auth.refreshToken
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/refresh
+          method: post
+
+  # ── User Profile ─────────────────────────────────────────
+  getProfile:
+    handler: src/handlers/profile.getProfile
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /profile
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  updateProfile:
+    handler: src/handlers/profile.updateProfile
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /profile
+          method: put
+          authorizer:
+            name: cognitoAuthorizer
+
+  getProfilePictureUploadUrl:
+    handler: src/handlers/profile.getUploadUrl
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /profile/picture/upload-url
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  confirmProfilePicture:
+    handler: src/handlers/profile.confirmPicture
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /profile/picture/confirm
+          method: patch
+          authorizer:
+            name: cognitoAuthorizer
+
+  deleteProfilePicture:
+    handler: src/handlers/profile.deletePicture
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /profile/picture
+          method: delete
+          authorizer:
+            name: cognitoAuthorizer
+
+  # ── Admin ────────────────────────────────────────────────
+  adminListUsers:
+    handler: src/handlers/admin.listUsers
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/users
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminGetUser:
+    handler: src/handlers/admin.getUser
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/users/{userId}
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminDeleteUser:
+    handler: src/handlers/admin.deleteUser
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/users/{userId}
+          method: delete
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminGetUploadUrl:
+    handler: src/handlers/admin.getUploadUrl
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/profile/picture/upload-url
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminConfirmPicture:
+    handler: src/handlers/admin.confirmPicture
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/profile/picture/confirm
+          method: patch
+          authorizer:
+            name: cognitoAuthorizer
+
+resources:
+  Resources:
+    # ── Cognito ──────────────────────────────────────────────
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:service}-${self:custom.stage}-pool
+        AutoVerifiedAttributes:
+          - email
+        UsernameAttributes:
+          - email
+        Schema:
+          - Name: email
+            Required: true
+            Mutable: true
+          - Name: name
+            Required: false
+            Mutable: true
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireUppercase: true
+            RequireNumbers: true
+            RequireSymbols: false
+        MfaConfiguration: 'OFF'
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}-${self:custom.stage}-client
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+          - ALLOW_USER_SRP_AUTH
+        GenerateSecret: false
+        TokenValidityUnits:
+          AccessToken: hours
+          IdToken: hours
+          RefreshToken: days
+        AccessTokenValidity: 1
+        IdTokenValidity: 1
+        RefreshTokenValidity: 30
+
+    AdminGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: admins
+        Description: Homestay administrators
+        UserPoolId: !Ref CognitoUserPool
+
+    UserGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: users
+        Description: Homestay guests and registered users
+        UserPoolId: !Ref CognitoUserPool
+
+    # ── DynamoDB ─────────────────────────────────────────────
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-users
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: email-index
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    # ── S3 ───────────────────────────────────────────────────
+    ProfileImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:custom.stage}-profile-images
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+              AllowedOrigins:
+                - '*'
+              MaxAge: 3600
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+            - Id: delete-temp-uploads
+              Status: Enabled
+              Prefix: temp/
+              ExpirationInDays: 1
+
+    ProfileImagesBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref ProfileImagesBucket
+        PolicyDocument:
+          Statement:
+            - Sid: AllowCloudFrontOAC
+              Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${ProfileImagesBucket.Arn}/*'
+              Condition:
+                StringEquals:
+                  AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+    # ── CloudFront ───────────────────────────────────────────
+    CloudFrontLogsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:custom.stage}-cf-logs
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerPreferred
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: true
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: true
+
+    CloudFrontOAC:
+      Type: AWS::CloudFront::OriginAccessControl
+      Properties:
+        OriginAccessControlConfig:
+          Name: ${self:service}-${self:custom.stage}-oac
+          OriginAccessControlOriginType: s3
+          SigningBehavior: always
+          SigningProtocol: sigv4
+
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Comment: ${self:service}-${self:custom.stage} profile images CDN
+          HttpVersion: http2
+          PriceClass: PriceClass_100
+          DefaultCacheBehavior:
+            TargetOriginId: S3ProfileImages
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+            CachedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            Compress: true
+          Origins:
+            - Id: S3ProfileImages
+              DomainName: !GetAtt ProfileImagesBucket.RegionalDomainName
+              OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+              S3OriginConfig:
+                OriginAccessIdentity: ''
+          Logging:
+            Bucket: !GetAtt CloudFrontLogsBucket.DomainName
+            Prefix: cf-access-logs/
+            IncludeCookies: false
+
+    # ── CloudWatch Log Groups ────────────────────────────────
+    RegisterLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-register
+        RetentionInDays: 30
+
+    LoginLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-login
+        RetentionInDays: 30
+
+    ConfirmAccountLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-confirmAccount
+        RetentionInDays: 30
+
+    RefreshTokenLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-refreshToken
+        RetentionInDays: 30
+
+    GetProfileLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-getProfile
+        RetentionInDays: 30
+
+    UpdateProfileLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-updateProfile
+        RetentionInDays: 30
+
+    GetProfilePictureUploadUrlLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-getProfilePictureUploadUrl
+        RetentionInDays: 30
+
+    ConfirmProfilePictureLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-confirmProfilePicture
+        RetentionInDays: 30
+
+    AdminListUsersLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminListUsers
+        RetentionInDays: 30
+
+    AdminGetUserLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminGetUser
+        RetentionInDays: 30
+
+    AdminDeleteUserLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminDeleteUser
+        RetentionInDays: 30
+
+    # ── CloudWatch Alarms ────────────────────────────────────
+    LambdaErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:custom.stage}-lambda-errors
+        AlarmDescription: Lambda function error rate exceeded threshold
+        MetricName: Errors
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 5
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    LambdaThrottleAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:custom.stage}-lambda-throttles
+        AlarmDescription: Lambda throttles detected
+        MetricName: Throttles
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 10
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+  Outputs:
+    UserPoolId:
+      Description: Cognito User Pool ID
+      Value: !Ref CognitoUserPool
+      Export:
+        Name: ${self:service}-${self:custom.stage}-UserPoolId
+
+    UserPoolClientId:
+      Description: Cognito App Client ID
+      Value: !Ref CognitoUserPoolClient
+      Export:
+        Name: ${self:service}-${self:custom.stage}-UserPoolClientId
+
+    ProfileImagesBucketName:
+      Description: S3 bucket for profile images
+      Value: !Ref ProfileImagesBucket
+
+    CloudFrontDomain:
+      Description: CloudFront distribution domain for serving profile images
+      Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Export:
+        Name: ${self:service}-${self:custom.stage}-CloudFrontDomain
+
+    UsersTableName:
+      Description: DynamoDB users table name
+      Value: !Ref UsersTable
+
+    ApiEndpoint:
+      Description: HTTP API base URL
+      Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
