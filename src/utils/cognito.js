@@ -9,6 +9,8 @@ const {
   AdminGetUserCommand,
   AdminDeleteUserCommand,
   ListUsersCommand,
+  ForgotPasswordCommand,
+  ConfirmForgotPasswordCommand,
 } = require('@aws-sdk/client-cognito-identity-provider');
 
 const cognito = new CognitoIdentityProviderClient({});
@@ -83,4 +85,20 @@ async function listCognitoUsers(limit = 50, paginationToken) {
   return { users: Users || [], paginationToken: PaginationToken };
 }
 
-module.exports = { signUp, confirmSignUp, initiateAuth, refreshAuth, addToGroup, adminGetUser, adminDeleteUser, listCognitoUsers };
+async function forgotPassword(email) {
+  await cognito.send(new ForgotPasswordCommand({
+    ClientId: CLIENT_ID,
+    Username: email,
+  }));
+}
+
+async function confirmForgotPassword(email, code, newPassword) {
+  await cognito.send(new ConfirmForgotPasswordCommand({
+    ClientId: CLIENT_ID,
+    Username: email,
+    ConfirmationCode: code,
+    Password: newPassword,
+  }));
+}
+
+module.exports = { signUp, confirmSignUp, initiateAuth, refreshAuth, addToGroup, adminGetUser, adminDeleteUser, listCognitoUsers, forgotPassword, confirmForgotPassword };

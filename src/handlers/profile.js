@@ -41,11 +41,21 @@ exports.updateProfile = async (event) => {
   let body;
   try { body = JSON.parse(event.body || '{}'); } catch { return res.badRequest('Invalid JSON'); }
 
-  const { name, phone, bio } = body;
+  const { name, phone, bio, dateOfBirth, homeAddress, propertyName, propertyAddress, numberOfRooms, gstNumber } = body;
   const updates = {};
-  if (name  !== undefined) updates.name  = name;
-  if (phone !== undefined) updates.phone = phone;
-  if (bio   !== undefined) updates.bio   = bio;
+  if (name            !== undefined) updates.name            = name;
+  if (phone           !== undefined) updates.phone           = phone;
+  if (bio             !== undefined) updates.bio             = bio;
+  if (dateOfBirth     !== undefined) updates.dateOfBirth     = dateOfBirth;
+  if (homeAddress     !== undefined) updates.homeAddress     = homeAddress;
+  if (propertyName    !== undefined) updates.propertyName    = propertyName;
+  if (propertyAddress !== undefined) updates.propertyAddress = propertyAddress;
+  if (numberOfRooms   !== undefined) {
+    const rooms = parseInt(numberOfRooms, 10);
+    if (isNaN(rooms) || rooms < 1) return res.badRequest('numberOfRooms must be a positive integer');
+    updates.numberOfRooms = rooms;
+  }
+  if (gstNumber !== undefined) updates.gstNumber = gstNumber;
 
   if (!Object.keys(updates).length) return res.badRequest('No updatable fields provided');
 
@@ -142,6 +152,6 @@ exports.deletePicture = async (event) => {
 };
 
 function sanitizeUser(user) {
-  const { userId, email, name, role, phone, bio, profilePictureUrl, createdAt, updatedAt } = user;
-  return { userId, email, name, role, phone, bio, profilePictureUrl, createdAt, updatedAt };
+  const { userId, email, name, role, phone, bio, dateOfBirth, homeAddress, propertyName, propertyAddress, numberOfRooms, gstNumber, profilePictureUrl, createdAt, updatedAt } = user;
+  return { userId, email, name, role, phone, bio, dateOfBirth, homeAddress, propertyName, propertyAddress, numberOfRooms, gstNumber, profilePictureUrl, createdAt, updatedAt };
 }

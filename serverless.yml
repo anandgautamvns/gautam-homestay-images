@@ -2,6 +2,8 @@ org: protiviti
 app: profile
 service: gautam-homestay-images
 
+useDotenv: true
+
 plugins:
   - serverless-offline
 
@@ -31,11 +33,16 @@ provider:
   environment:
     STAGE: ${self:custom.stage}
     USERS_TABLE: !Ref UsersTable
+    BOOKINGS_TABLE: !Ref BookingsTable
     PROFILE_IMAGES_BUCKET: !Ref ProfileImagesBucket
     USER_POOL_ID: !Ref CognitoUserPool
     USER_POOL_CLIENT_ID: !Ref CognitoUserPoolClient
     CLOUDFRONT_DOMAIN: !GetAtt CloudFrontDistribution.DomainName
     AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+    # Booking notifications — set in .env (local) or CI/CD environment before deploying
+    FROM_EMAIL:   ${env:FROM_EMAIL, 'anandgautamvns@gmail.com'}
+    ADMIN_EMAIL:  ${env:ADMIN_EMAIL, 'anandgautamvns@gmail.com'}
+    ADMIN_PHONE:  ${env:ADMIN_PHONE, '8542073022'}
 
   httpApi:
     cors:
@@ -79,6 +86,17 @@ provider:
           Resource:
             - !GetAtt UsersTable.Arn
             - !Sub '${UsersTable.Arn}/index/*'
+            - !GetAtt BookingsTable.Arn
+            - !Sub '${BookingsTable.Arn}/index/*'
+        - Effect: Allow
+          Action:
+            - ses:SendEmail
+            - ses:SendRawEmail
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - sns:Publish
+          Resource: '*'
         - Effect: Allow
           Action:
             - cognito-idp:AdminCreateUser
@@ -92,6 +110,8 @@ provider:
             - cognito-idp:InitiateAuth
             - cognito-idp:SignUp
             - cognito-idp:ConfirmSignUp
+            - cognito-idp:ForgotPassword
+            - cognito-idp:ConfirmForgotPassword
           Resource: !GetAtt CognitoUserPool.Arn
         - Effect: Allow
           Action:
@@ -120,6 +140,15 @@ functions:
           path: /auth/register
           method: post
 
+  registerOwner:
+    handler: src/handlers/auth.registerOwner
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/register/owner
+          method: post
+
   login:
     handler: src/handlers/auth.login
     layers:
@@ -145,6 +174,24 @@ functions:
     events:
       - httpApi:
           path: /auth/refresh
+          method: post
+
+  forgotPassword:
+    handler: src/handlers/auth.forgotPassword
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/forgot-password
+          method: post
+
+  resetPassword:
+    handler: src/handlers/auth.resetPassword
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/reset-password
           method: post
 
   # ── User Profile ─────────────────────────────────────────
@@ -259,6 +306,49 @@ functions:
           authorizer:
             name: cognitoAuthorizer
 
+  # ── Bookings ─────────────────────────────────────────────
+  createBooking:
+    handler: src/handlers/booking.createBooking
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /bookings
+          method: post
+
+  adminListBookings:
+    handler: src/handlers/booking.listBookings
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/bookings
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminGetBooking:
+    handler: src/handlers/booking.getBooking
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/bookings/{bookingId}
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminUpdateBookingStatus:
+    handler: src/handlers/booking.updateBookingStatus
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/bookings/{bookingId}/status
+          method: patch
+          authorizer:
+            name: cognitoAuthorizer
+
 resources:
   Resources:
     # ── Cognito ──────────────────────────────────────────────
@@ -343,6 +433,33 @@ resources:
             KeySchema:
               - AttributeName: email
                 KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    BookingsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-bookings
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: bookingId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: bookingId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: email-index
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
             Projection:
               ProjectionType: ALL
 
@@ -450,6 +567,12 @@ resources:
         LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-register
         RetentionInDays: 30
 
+    RegisterOwnerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-registerOwner
+        RetentionInDays: 30
+
     LoginLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
@@ -466,6 +589,18 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-refreshToken
+        RetentionInDays: 30
+
+    ForgotPasswordLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-forgotPassword
+        RetentionInDays: 30
+
+    ResetPasswordLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-resetPassword
         RetentionInDays: 30
 
     GetProfileLogGroup:
@@ -508,6 +643,30 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminDeleteUser
+        RetentionInDays: 30
+
+    CreateBookingLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-createBooking
+        RetentionInDays: 30
+
+    AdminListBookingsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminListBookings
+        RetentionInDays: 30
+
+    AdminGetBookingLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminGetBooking
+        RetentionInDays: 30
+
+    AdminUpdateBookingStatusLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminUpdateBookingStatus
         RetentionInDays: 30
 
     # ── CloudWatch Alarms ────────────────────────────────────
@@ -565,6 +724,10 @@ resources:
     UsersTableName:
       Description: DynamoDB users table name
       Value: !Ref UsersTable
+
+    BookingsTableName:
+      Description: DynamoDB bookings table name
+      Value: !Ref BookingsTable
 
     ApiEndpoint:
       Description: HTTP API base URL
