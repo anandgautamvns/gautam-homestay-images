@@ -36,8 +36,12 @@ function conflict(message = 'Conflict') {
   return { statusCode: 409, headers, body: JSON.stringify({ error: message }) };
 }
 
+function tooManyRequests(message = 'Too many requests') {
+  return { statusCode: 429, headers, body: JSON.stringify({ error: message }) };
+}
+
 function serverError(message = 'Internal server error') {
   return { statusCode: 500, headers, body: JSON.stringify({ error: message }) };
 }
 
-module.exports = { ok, created, noContent, badRequest, unauthorized, forbidden, notFound, conflict, serverError };
+module.exports = { ok, created, noContent, badRequest, unauthorized, forbidden, notFound, conflict, tooManyRequests, serverError };

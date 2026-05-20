@@ -155,6 +155,6 @@ exports.confirmPicture = async (event) => {
 };
 
 function sanitizeUser(user) {
-  const { userId, email, name, role, phone, bio, profilePictureUrl, createdAt, updatedAt } = user;
-  return { userId, email, name, role, phone, bio, profilePictureUrl, createdAt, updatedAt };
+  const { userId, email, name, role, phone, bio, dateOfBirth, homeAddress, propertyName, propertyAddress, numberOfRooms, gstNumber, profilePictureUrl, createdAt, updatedAt } = user;
+  return { userId, email, name, role, phone, bio, dateOfBirth, homeAddress, propertyName, propertyAddress, numberOfRooms, gstNumber, profilePictureUrl, createdAt, updatedAt };
 }

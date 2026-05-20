@@ -2,6 +2,8 @@ org: protiviti
 app: profile
 service: gautam-homestay-images
 
+useDotenv: true
+
 plugins:
   - serverless-offline
 
@@ -31,11 +33,19 @@ provider:
   environment:
     STAGE: ${self:custom.stage}
     USERS_TABLE: !Ref UsersTable
+    BOOKINGS_TABLE: !Ref BookingsTable
+    ROOMS_TABLE: !Ref RoomsTable
+    GALLERY_TABLE: !Ref GalleryTable
+    REVIEWS_TABLE: !Ref ReviewsTable
     PROFILE_IMAGES_BUCKET: !Ref ProfileImagesBucket
     USER_POOL_ID: !Ref CognitoUserPool
     USER_POOL_CLIENT_ID: !Ref CognitoUserPoolClient
     CLOUDFRONT_DOMAIN: !GetAtt CloudFrontDistribution.DomainName
     AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+    # Booking notifications — set in .env (local) or CI/CD environment before deploying
+    FROM_EMAIL:   ${env:FROM_EMAIL, 'anandgautamvns@gmail.com'}
+    ADMIN_EMAIL:  ${env:ADMIN_EMAIL, 'anandgautamvns@gmail.com'}
+    ADMIN_PHONE:  ${env:ADMIN_PHONE, '8542073022'}
 
   httpApi:
     cors:
@@ -79,6 +89,20 @@ provider:
           Resource:
             - !GetAtt UsersTable.Arn
             - !Sub '${UsersTable.Arn}/index/*'
+            - !GetAtt BookingsTable.Arn
+            - !Sub '${BookingsTable.Arn}/index/*'
+            - !GetAtt RoomsTable.Arn
+            - !GetAtt GalleryTable.Arn
+            - !GetAtt ReviewsTable.Arn
+        - Effect: Allow
+          Action:
+            - ses:SendEmail
+            - ses:SendRawEmail
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - sns:Publish
+          Resource: '*'
         - Effect: Allow
           Action:
             - cognito-idp:AdminCreateUser
@@ -92,6 +116,8 @@ provider:
             - cognito-idp:InitiateAuth
             - cognito-idp:SignUp
             - cognito-idp:ConfirmSignUp
+            - cognito-idp:ForgotPassword
+            - cognito-idp:ConfirmForgotPassword
           Resource: !GetAtt CognitoUserPool.Arn
         - Effect: Allow
           Action:
@@ -120,6 +146,15 @@ functions:
           path: /auth/register
           method: post
 
+  registerOwner:
+    handler: src/handlers/auth.registerOwner
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/register/owner
+          method: post
+
   login:
     handler: src/handlers/auth.login
     layers:
@@ -145,6 +180,24 @@ functions:
     events:
       - httpApi:
           path: /auth/refresh
+          method: post
+
+  forgotPassword:
+    handler: src/handlers/auth.forgotPassword
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/forgot-password
+          method: post
+
+  resetPassword:
+    handler: src/handlers/auth.resetPassword
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /auth/reset-password
           method: post
 
   # ── User Profile ─────────────────────────────────────────
@@ -259,6 +312,226 @@ functions:
           authorizer:
             name: cognitoAuthorizer
 
+  # ── Rooms ────────────────────────────────────────────────
+  listRooms:
+    handler: src/handlers/rooms.listRooms
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /rooms
+          method: get
+
+  getRoom:
+    handler: src/handlers/rooms.getRoom
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /rooms/{roomId}
+          method: get
+
+  adminCreateRoom:
+    handler: src/handlers/rooms.createRoom
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/rooms
+          method: post
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminUpdateRoom:
+    handler: src/handlers/rooms.updateRoom
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/rooms/{roomId}
+          method: put
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminDeleteRoom:
+    handler: src/handlers/rooms.deleteRoom
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/rooms/{roomId}
+          method: delete
+          authorizer:
+            name: cognitoAuthorizer
+
+  # ── Gallery ───────────────────────────────────────────────
+  listPhotos:
+    handler: src/handlers/gallery.listPhotos
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /gallery
+          method: get
+
+  adminGetGalleryUploadUrl:
+    handler: src/handlers/gallery.getUploadUrl
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/gallery/upload-url
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminAddPhoto:
+    handler: src/handlers/gallery.addPhoto
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/gallery
+          method: post
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminUpdatePhoto:
+    handler: src/handlers/gallery.updatePhoto
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/gallery/{photoId}
+          method: patch
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminDeletePhoto:
+    handler: src/handlers/gallery.deletePhoto
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/gallery/{photoId}
+          method: delete
+          authorizer:
+            name: cognitoAuthorizer
+
+  # ── Reviews ───────────────────────────────────────────────
+  listReviews:
+    handler: src/handlers/reviews.listReviews
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /reviews
+          method: get
+
+  submitReview:
+    handler: src/handlers/reviews.submitReview
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /reviews
+          method: post
+
+  adminListReviews:
+    handler: src/handlers/reviews.adminListReviews
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/reviews
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminApproveReview:
+    handler: src/handlers/reviews.approveReview
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/reviews/{reviewId}/approve
+          method: patch
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminDeleteReview:
+    handler: src/handlers/reviews.deleteReview
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/reviews/{reviewId}
+          method: delete
+          authorizer:
+            name: cognitoAuthorizer
+
+  # ── Content (static) ─────────────────────────────────────
+  listAmenities:
+    handler: src/handlers/content.listAmenities
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /amenities
+          method: get
+
+  getContact:
+    handler: src/handlers/content.getContact
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /contact
+          method: get
+
+  # ── Bookings ─────────────────────────────────────────────
+  createBooking:
+    handler: src/handlers/booking.createBooking
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /bookings
+          method: post
+
+  adminListBookings:
+    handler: src/handlers/booking.listBookings
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/bookings
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminGetBooking:
+    handler: src/handlers/booking.getBooking
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/bookings/{bookingId}
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+
+  adminUpdateBookingStatus:
+    handler: src/handlers/booking.updateBookingStatus
+    layers:
+      - !Ref UtilitiesLambdaLayer
+    events:
+      - httpApi:
+          path: /admin/bookings/{bookingId}/status
+          method: patch
+          authorizer:
+            name: cognitoAuthorizer
+
 resources:
   Resources:
     # ── Cognito ──────────────────────────────────────────────
@@ -343,6 +616,75 @@ resources:
             KeySchema:
               - AttributeName: email
                 KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    RoomsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-rooms
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: roomId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: roomId
+            KeyType: HASH
+
+    GalleryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-gallery
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: photoId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: photoId
+            KeyType: HASH
+
+    ReviewsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-reviews
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: reviewId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: reviewId
+            KeyType: HASH
+
+    BookingsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-bookings
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: bookingId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: bookingId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: email-index
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
             Projection:
               ProjectionType: ALL
 
@@ -450,6 +792,12 @@ resources:
         LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-register
         RetentionInDays: 30
 
+    RegisterOwnerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-registerOwner
+        RetentionInDays: 30
+
     LoginLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
@@ -466,6 +814,18 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-refreshToken
+        RetentionInDays: 30
+
+    ForgotPasswordLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-forgotPassword
+        RetentionInDays: 30
+
+    ResetPasswordLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-resetPassword
         RetentionInDays: 30
 
     GetProfileLogGroup:
@@ -508,6 +868,132 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminDeleteUser
+        RetentionInDays: 30
+
+    ListRoomsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-listRooms
+        RetentionInDays: 30
+
+    GetRoomLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-getRoom
+        RetentionInDays: 30
+
+    AdminCreateRoomLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminCreateRoom
+        RetentionInDays: 30
+
+    AdminUpdateRoomLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminUpdateRoom
+        RetentionInDays: 30
+
+    AdminDeleteRoomLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminDeleteRoom
+        RetentionInDays: 30
+
+    ListPhotosLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-listPhotos
+        RetentionInDays: 30
+
+    AdminGetGalleryUploadUrlLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminGetGalleryUploadUrl
+        RetentionInDays: 30
+
+    AdminAddPhotoLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminAddPhoto
+        RetentionInDays: 30
+
+    AdminUpdatePhotoLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminUpdatePhoto
+        RetentionInDays: 30
+
+    AdminDeletePhotoLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminDeletePhoto
+        RetentionInDays: 30
+
+    ListReviewsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-listReviews
+        RetentionInDays: 30
+
+    SubmitReviewLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-submitReview
+        RetentionInDays: 30
+
+    AdminListReviewsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminListReviews
+        RetentionInDays: 30
+
+    AdminApproveReviewLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminApproveReview
+        RetentionInDays: 30
+
+    AdminDeleteReviewLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminDeleteReview
+        RetentionInDays: 30
+
+    ListAmenitiesLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-listAmenities
+        RetentionInDays: 30
+
+    GetContactLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-getContact
+        RetentionInDays: 30
+
+    CreateBookingLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-createBooking
+        RetentionInDays: 30
+
+    AdminListBookingsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminListBookings
+        RetentionInDays: 30
+
+    AdminGetBookingLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminGetBooking
+        RetentionInDays: 30
+
+    AdminUpdateBookingStatusLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:custom.stage}-adminUpdateBookingStatus
         RetentionInDays: 30
 
     # ── CloudWatch Alarms ────────────────────────────────────
@@ -565,6 +1051,22 @@ resources:
     UsersTableName:
       Description: DynamoDB users table name
       Value: !Ref UsersTable
+
+    BookingsTableName:
+      Description: DynamoDB bookings table name
+      Value: !Ref BookingsTable
+
+    RoomsTableName:
+      Description: DynamoDB rooms table name
+      Value: !Ref RoomsTable
+
+    GalleryTableName:
+      Description: DynamoDB gallery table name
+      Value: !Ref GalleryTable
+
+    ReviewsTableName:
+      Description: DynamoDB reviews table name
+      Value: !Ref ReviewsTable
 
     ApiEndpoint:
       Description: HTTP API base URL
